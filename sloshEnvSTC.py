@@ -162,6 +162,7 @@ class SloshEnv  (gym.Env):
         self.phiDot = return_state[3]
             
         observation = np.array(return_state)
+        
         return observation, self.reward, self.done, info
 
         

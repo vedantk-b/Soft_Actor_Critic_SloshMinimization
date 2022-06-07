@@ -2,6 +2,7 @@
 # SLosh enviornment without STC Acods paper code
 
 from argparse import Action
+from aiohttp import DataQueue
 # from cv2 import FlannBasedMatcher
 import numpy as np
 from stable_baselines3 import PPO
@@ -10,10 +11,12 @@ from gym import spaces
 from numpy import sin, cos, power
 import matplotlib.pyplot as plt
 import random
+from collections import deque
 
 from scipy.integrate import odeint
 
 u_previous = [1, 1]
+# u_previous = [0, 0]
 
 class SloshEnv(gym.Env):
     
@@ -32,7 +35,7 @@ class SloshEnv(gym.Env):
         self.d = 0       # d is external disturbance in input channel equation 1(a)
 
         
-    def dynamics(self, state, t, u):
+    def dynamics(self, state, u):
 
         zeta1 = state[0]
         zeta2 = state[1]
@@ -61,7 +64,7 @@ class SloshEnv(gym.Env):
         f2_term3 = (cos(zeta3)/l) * f1
         f2 = -(f2_term1 + f2_term2 + f2_term3)
         b2 = cos(zeta3)/(l * D)
-      
+
         
         zeta1Dot = zeta2
         zeta2Dot = f1 + b1*(u + d)
@@ -71,92 +74,60 @@ class SloshEnv(gym.Env):
         return [zeta1Dot,zeta2Dot,zeta3Dot,zeta4Dot]
 
 
-    def simulate(self, initStates, T, action, done):
-        x = initStates[0]
-        xDot = initStates[1]
-        phi = initStates[2]
-        phiDot = initStates[3]
-        
-        
-        #print('&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&',u_previous)
-        #print(action)
-        #print(initStates)
+    def step(self, action):
+        action *= 10
+        self.total_steps += 1
+        T = 0.01
         self.u = action
         u_previous.append(self.u)
         u_previous.remove(u_previous[0])
-        #print('&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&',u_previous)
-        #print(self.u)
         xDes = 0.175
         xDotDes = 0
         phiDes = 0
         phiDotDes = 0
 
-        ex = x - xDes
-        exDot = xDot - xDotDes
-        ephi = phi - phiDes
-        ephiDot = phiDot - phiDotDes
+        ex = self.x - xDes
+        exDot = self.xDot - xDotDes
+        ephi = self.phi - phiDes
+        ephiDot = self.phiDot - phiDotDes
 
- 
         initCon = [ex,exDot,ephi,ephiDot]  #initial condition in terms of error
         
         dT = 0.0001        
         x = np.array(initCon)
-        #print(x)
         sol = []
-        reward = 0
-        #u=[]   # control input
-  
+
         for t in np.arange(0,T,dT):
             sol.append(x)
-            #xDot = self.dynamics(x,t)
-            #print(self.u)
-            xDot = self.dynamics(x,t,self.u)
-            xDot = np.array(xDot)
+            xDot = self.dynamics(x,self.u)
+            xDot = np.array(xDot, dtype=np.float64)
+            # print(f"t = {t}")
 
             x = x + xDot*dT
-            #coost = round(-(.40*abs(x[0])+0.3*abs(x[2])+0.3*abs(x[3])),3); # intial cost function
+
+            # print(f"x of zero is = {x[0]}")
             
-            coost = round(-(1000*abs(x[0])+0.3*abs(x[2])+0.3*abs(x[3])),3);
-            #coost = round(-(100*abs(x[0])),3);
-            #if x[0]>0:
-                #coost = coost-10000
-            # adding the slope idea of the cart position x[0]= x-xd # duration is tps=0.01
-            #current(x-xd) -initial (x-xd)
-            # if x[0] > 0 & (x[0] > sol[-1][0]):     
-            #     coost = coost-20
-                
-            # if x[0] < 0 & (x[0] < sol[-1][0]):
-            #     coost = coost-20
-                
-            # if x[0] > 0 & (x[0] < sol[-1][0]):
-            #     coost = coost+10
-                
-            # if x[0] < 0 & (x[0] > sol[-1][0]):
-            #     coost = coost+10
- 
-            if (abs(x[0]) < 0.025 ) and (abs(x[1]) < 1):
-                coost = coost + 1500
-            # if abs(self.u) > 4:
-            #     coost = coost -100
+            cost = -(10*abs(x[0])+0.3*abs(x[2])+0.3*abs(x[3]))
+
+            if (abs(x[0]) < 0.0025 ) and (abs(x[1]) < 1):
+                cost = cost + 15
+
             if abs(self.u) > 3 :
-                coost = coost - abs(self.u)*1000
-            #print('$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$', u_previous[-2], self.u)
+                cost = cost - abs(self.u)*10
+
             if abs(self.u - u_previous[-2]) > 0.05:
-                coost = coost - 100
+                cost = cost - 10
                 
-            reward += coost*0.001
+            # print(f"cost = {cost}")
+                
+            self.total_reward += cost
                 
 
-            
-        t = np.arange(0,T,dT)
         sol = np.array(sol)
         
-        # if abs(reward)< 100:
-        #     done = True
-        #     reward += 100
-        # else:
-        #     done = False
-            
+        info = {}    
+
+        info["sol"] = sol
         
         return_state = [0,0,0,0]
         
@@ -165,16 +136,49 @@ class SloshEnv(gym.Env):
         return_state[1] = xDot[0]          #first element selected which is xDOt
         return_state[2] = sol[-1][2]       #3rd element of last entry of sol
         return_state[3] = sol[-1][3]       #4th element of last entry of sol
-       
 
-        return return_state,reward,done,t,sol
+        self.x = return_state[0]
+        self.xDot = return_state[1]
+        self.phi = return_state[2]
+        self.phiDot = return_state[3]
+
+        observation = np.array(return_state)
+
+        self.prev_states.append(observation[0])
+
+        prev_states_in_range = True
+
+        for i in self.prev_states:
+            if(abs(i - 0.175) > 0.01):
+                self.total_reward -= 200
+                prev_states_in_range = False
+        
+            
+        if ((len(self.prev_states) == 20) and (prev_states_in_range == True)) :
+            print(f"20K reward hehe")
+            self.total_reward += 20000
+            self.done = True
+
+        if(self.total_steps > 1000):
+            self.total_reward -= 5000
+            self.done = True
+            
+        self.reward = self.total_reward - self.prev_reward
+        self.prev_reward = self.total_reward
+        
+        self.reward = np.float64(self.reward)
+        return observation, self.reward, self.done, info
     
     def reset(self):
-        x0 = round(random.uniform(0.00, 0.250), 4)
-        x1 = round(random.uniform(-0.150, 0.400), 4)
-        x2 = round(random.uniform(-0.25, 0.25), 4)
-        x3 = round(random.uniform(-2.50, 02.50), 4)
-        return [x0,x1,x2,x3]
-        
-
-    
+        self.total_steps = 0
+        self.prev_states = deque(maxlen=20)
+        self.total_reward = 0
+        self.prev_reward  = 0
+        self.done = False
+        self.x = 0.0
+        self.xDot = 0.0
+        self.phi = 0.0
+        self.phiDot = 0.0
+        observation = [0.0, 0.0, 0.0, 0.0]
+        observation = np.array(observation)
+        return observation
