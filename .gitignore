@@ -1,5 +1,7 @@
-envtest.ipynb
+envtest*
 checkenv.py
 weights
 logs
 doublecheckenv.py
+gud_weig*
+*pycache*

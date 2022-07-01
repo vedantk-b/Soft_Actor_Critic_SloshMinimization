@@ -1,13 +1,18 @@
 
 # SLosh enviornment without STC Acods paper code
 
+import numpy as np
+from numpy import sin, cos, power
+import matplotlib.pyplot as plt
+import random
+from scipy.integrate import odeint
 from argparse import Action
 from functools import total_ordering
 import math
 # from aiohttp import DataQueue
 # from cv2 import FlannBasedMatcher
 import numpy as np
-from stable_baselines3 import PPO
+# from stable_baselines3 import PPO
 import gym 
 from gym import spaces
 from numpy import sin, cos, power
@@ -15,17 +20,20 @@ import matplotlib.pyplot as plt
 import random
 from collections import deque
 
-# from scipy.integrate import odeint
+from torch import true_divide
+
+sign = lambda z: abs(z)/z if z!=0 else 0  # One line equivalent of the signum function
+
+u_previous = [1, 1]
 
 class SloshEnv(gym.Env):
-    
+
     def __init__(self,u= 1.2):
         super(SloshEnv, self).__init__()
 
-        self.action_space = spaces.Box(low=-1, high=1, shape=(1,))
-        self.observation_space = spaces.Box(low = -1, high = 1, shape=(5,), dtype=np.float64)
+        self.action_space = spaces.Box(low=-5, high=5, shape=(1,))
+        self.observation_space = spaces.Box(low = -1, high = 1, shape=(4,), dtype=np.float64)
 
-        
         self.ms = 1.32 # in kg
         self.M = 10.82 # M=Ml+Mc+Mb+m=10.82
         self.g = 9.8
@@ -74,62 +82,63 @@ class SloshEnv(gym.Env):
 
 
     def step(self, action):
-        info = {}    
-        action_copy = action
-        action = action*3
-        self.total_steps += 1
-        # T = 0.01
-        T = 0.1
+        info = {}
+        T = 0.01
+        initStates = [self.x, self.xDot, self.phi, self.phiDot]
+        x = initStates[0]
+        xDot = initStates[1]
+        phi = initStates[2]
+        phiDot = initStates[3]
+        
         self.u = action
+        u_previous.append(self.u)
+        u_previous.remove(u_previous[0])
         xDes = 0.175
         xDotDes = 0
         phiDes = 0
         phiDotDes = 0
 
-        ex = self.x - xDes
-        exDot = self.xDot - xDotDes
-        ephi = self.phi - phiDes
-        ephiDot = self.phiDot - phiDotDes
+        ex = x - xDes
+        exDot = xDot - xDotDes
+        ephi = phi - phiDes
+        ephiDot = phiDot - phiDotDes
+
 
         initCon = [ex,exDot,ephi,ephiDot]  #initial condition in terms of error
         
         dT = 0.0001        
         x = np.array(initCon)
         sol = []
-
         reward = 0
 
         for t in np.arange(0,T,dT):
             sol.append(x)
             xDot = self.dynamics(x,self.u)
-            xDot = np.array(xDot, dtype=np.float64)
-            # print(f"t = {t}")
+            xDot = np.array(xDot, dtype=np.float32)
 
             x = x + xDot*dT
-
-            # print(f"x of zero is = {x[0]}")
             
-            cost = -(10*abs(x[0])+abs(x[2])+abs(x[3]))
+            # coost = -(1000*abs(x[0])+0.3*abs(x[2])+0.3*abs(x[3]))
 
-            # if (abs(x[0]) < 0.0025 ) and (abs(x[1]) < 1):
-            #     cost = cost + 1.5
-            reward += cost*0.05
-
-        info["func_rew"] = reward
-        
-        reward = reward - abs(self.u/3 - self.prev_action)*20
-
-        info["udif_rew"] = reward - info["func_rew"]
-        # if abs(self.u - self.prev_action) > 0.05:
-        # print(f"act_diff = {abs(self.u/3 - self.prev_action)}")
+            # # print(f"x = {x} \n\n")
+            # if (abs(x[0]) < 0.025 ) and (abs(x[1]) < 1):
+            #     coost = coost + 1500
+            # if abs(self.u) > 3 :
+            #     coost = coost - abs(self.u)*1000
+            # if abs(self.u - u_previous[-2]) > 0.05:
+            #     coost = coost - 100
                 
-        # if abs(self.u) > 3 :
-        #     cost = cost - abs(self.u)*10
+            # reward += coost*0.001
+            #reward -= (x[0] + 0.3*abs(x[2]))
+            R1 = round(100-(2000*abs(x[0]) + 5*abs(x[1])+ 0.3*abs(x[2])+0.3*abs(x[3])),3);
+            R2 = 100 - 20*abs(self.u)
+            R3 = 100 - 50*(abs(abs(self.u) - abs(u_previous[-2])))
+            reward = R1 + R2 + R3
+                
 
+            
         sol = np.array(sol)
         
-
-        # info["sol"] = sol
         return_state = [0,0,0,0]
         
         #return state or state at the end of episode 
@@ -138,62 +147,34 @@ class SloshEnv(gym.Env):
         return_state[2] = sol[-1][2]       #3rd element of last entry of sol
         return_state[3] = sol[-1][3]       #4th element of last entry of sol
 
+        info["sol"] = sol
+
         self.x = return_state[0]
         self.xDot = return_state[1]
         self.phi = return_state[2]
         self.phiDot = return_state[3]
 
-        return_state.append(self.prev_action)
+        observation = np.array(return_state, dtype=np.float32)
 
-        observation = np.array(return_state, dtype=np.float64)
+        # if(abs(observation[0] - 0.175) < 0.0001):
+        #     self.done = True
 
-        self.prev_states.append(observation[0]) 
-
-        prev_states_in_range = True
-
-        for i in self.prev_states:
-            # if(abs(i - 0.175) > (0.1744/max(1, math.log(self.total_steps, 1.062)))):
-            if(abs(i - 0.175) > 0.001):
-                reward -= abs(i - 0.175)*10
-                prev_states_in_range = False
-            else:
-                print("100rev hehe")
-                reward += 100
+        # if(observation[0] > 0.175):
+        #     self.done = True
         
-        info["prev_state_reward"] = reward - info["func_rew"] - info["udif_rew"]
-        
-        if ((len(self.prev_states) == 10) and (prev_states_in_range == True)) :
-            print("50K reward woahahaha!!!")
-            reward += 5000
-            self.done = True
-
-        if(self.total_steps > 600):
-            reward -= 200
-            self.done = True
-            
-        # self.reward = self.total_reward - self.prev_reward
-        # self.prev_reward = self.total_reward
-
-        info["terminate_reward"] = reward - info["func_rew"] - info["udif_rew"] - info["prev_state_reward"]
-
-        info["sol"] = sol
-
-        # self.reward = np.float64(self.reward)
-        reward = np.float64(reward)
-        self.prev_action = action_copy
         return observation, reward, self.done, info
     
     def reset(self):
-        self.prev_action = 0
-        self.total_steps = 0
-        self.prev_states = deque(maxlen=10)
-        self.total_reward = 0
-        self.prev_reward  = 0
+        # x0 = round(random.uniform(0.00, 0.250), 4)
+        # x1 = round(random.uniform(-0.150, 0.400), 4)
+        # x2 = round(random.uniform(-0.25, 0.25), 4)
+        # x3 = round(random.uniform(-2.50, 2.50), 4)
+        # return [x0,x1,x2,x3]
         self.done = False
         self.x = 0.0
         self.xDot = 0.0
         self.phi = 0.0
         self.phiDot = 0.0
-        observation = [0.0, 0.0, 0.0, 0.0, 0.0]
+        observation = [0.0, 0.0, 0.0, 0.0]
         observation = np.array(observation)
         return observation
