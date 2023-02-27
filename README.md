@@ -1,5 +1,6 @@
 # SPARK_SloshMinimization
 SloshMinimization Using Reinforcement Learning
 
-<img title="Poster" alt="Slosh Minimization" src="poster.png", height = 800, width = 400>
+![Slosh Minimization](poster.png){:height="800px" width="400px"}
+
 
